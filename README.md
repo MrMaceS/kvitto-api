@@ -11,11 +11,14 @@ API для приёма платежей онлайн-школы "Квитто".
 - Pydantic v2
 - Alembic (миграции БД)
 - pytest + httpx (тесты)
-- Black + Flake8 + MyPy (качество кода)
+- Ruff + Flake8 + MyPy (качество кода)
 - Docker Compose (локальная разработка)
 - GitHub Actions (CI/CD)
 
 ## Быстрый старт
+
+Нужны Python 3.11+ и Docker (Docker используется только для PostgreSQL — само приложение
+запускается локально).
 
 ### 1. Поднять PostgreSQL
 
@@ -39,11 +42,17 @@ pip install -r requirements.txt
 alembic upgrade head
 ```
 
+Приложение таблицы само **не создаёт** — этот шаг обязателен. Без него старт завершится
+ошибкой `relation "tariffs" does not exist`.
+
 ### 4. Запустить приложение
 
 ```bash
 python -m uvicorn app.main:app --reload
 ```
+
+При старте приложение создаёт три тарифа (basic, standard, premium); повторный запуск
+дубликатов не создаёт.
 
 API доступен на http://localhost:8000  
 Swagger-документация: http://localhost:8000/docs
@@ -54,7 +63,42 @@ Swagger-документация: http://localhost:8000/docs
 python -m pytest tests/ -v
 ```
 
-Ожидается **13 зелёных тестов** (9 обязательных + 4 бонусных).
+Для тестов нужна запущенная тестовая БД на порту 5433 (шаг 1). Таблицы в ней тесты
+создают и удаляют сами, миграции для них не нужны.
+
+Ожидается **24 зелёных теста**: пять обязательных групп из ТЗ (промокод, график рассрочки,
+идемпотентность, запрещённый переход, 404) плюс проверки вебхука с подписью, фильтров
+`GET /payments` и пограничных случаев.
+
+## Настройки (переменные окружения)
+
+Задаются переменными окружения или файлом `.env` (шаблон — `.env.example`).
+Без них используются значения по умолчанию, подходящие для локального запуска.
+
+| Переменная | По умолчанию | Назначение |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+asyncpg://kvitto:kvitto@localhost:5432/kvitto` | БД приложения и Alembic |
+| `WEBHOOK_SECRET` | `super-secret-webhook-key` | секрет HMAC-подписи вебхука |
+| `PROMO_CODE` | `KVITTO10` | промокод (регистр не важен) |
+| `PROMO_DISCOUNT_PERCENT` | `10` | размер скидки, % |
+
+Тесты всегда используют `postgresql+asyncpg://kvitto_test:kvitto_test@localhost:5433/kvitto_test`
+(зашито в `tests/conftest.py`) и `DATABASE_URL` не читают.
+
+## Правила API
+
+- **Деньги** — целые копейки (`1990000` = 19 900 ₽), `float` не используется.
+- **Промокод** `KVITTO10` даёт −10% от цены тарифа. Поле `amount` — сумма к оплате,
+  `discount` — размер скидки в копейках. Неизвестный промокод → `422`.
+- **Способ оплаты:** `card`, `sbp` или `installment`. Для `installment` обязателен
+  `installment_months` (3, 6 или 12), для `card` и `sbp` это поле передавать нельзя (`422`).
+- **График рассрочки** считается от суммы после скидки; лишние копейки идут в первые платежи.
+- **Идемпотентность:** при повторе `Idempotency-Key` возвращается тот же платёж с кодом `200`,
+  второй не создаётся. Запросы без ключа никогда не объединяются.
+- **Вебхук банка** требует заголовок `X-Signature` (HMAC-SHA256 от тела запроса). Допустимые
+  переходы: `pending → succeeded`, `pending → failed`, `succeeded → refunded`. Остальные дают
+  `409 {"error": "invalid_transition"}`, статус при этом не меняется. Нет подписи или она
+  неверна — `401`, платёж не найден — `404`, успех — `200 {"result": "ok"}`.
 
 ## Примеры запросов
 
@@ -129,41 +173,42 @@ curl "http://localhost:8000/payments?email=user@example.com&status=succeeded"
 
 ### Обновить статус платежа (вебхук от банка)
 
-Требует заголовок `X-Signature` с HMAC-SHA256 подписью тела запроса.
+Требует заголовок `X-Signature` с HMAC-SHA256 подписью **точного** тела запроса
+(секрет — `WEBHOOK_SECRET`).
 
 ```bash
-# Пример генерации подписи (Python):
-python -c "import hmac, hashlib, json; body = json.dumps({'payment_id': 1, 'status': 'succeeded'}, separators=(',', ':')); print(hmac.new(b'super-secret-webhook-key', body.encode(), hashlib.sha256).hexdigest())"
+$BODY = '{"payment_id":8,"status":"succeeded"}'
+$SECRET = "super-secret-webhook-key"
+$hmac = New-Object System.Security.Cryptography.HMACSHA256
+$hmac.Key = [System.Text.Encoding]::UTF8.GetBytes($SECRET)
+$hashBytes = $hmac.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($BODY))
+$SIG = -join ($hashBytes | ForEach-Object { $_.ToString("x2") })
+Write-Host "Твоя подпись: $SIG"
 
 curl -X POST http://localhost:8000/webhooks/bank \
   -H "Content-Type: application/json" \
-  -H "X-Signature: <вычисленная_подпись>" \
-  -d '{
-    "payment_id": 1,
-    "status": "succeeded"
-  }'
+  -H "X-Signature: $SIG" \
+  -d "$BODY"
 ```
 
 ## Проверка качества кода
 
-Проект использует три инструмента для поддержания качества:
-
 ```bash
-# Форматирование кода
-black .
+# Линтер и проверка форматирования (то же самое запускает CI)
+ruff check .
+ruff format --check .
 
-# Проверка стиля
+# Дополнительно: стиль и типы
 flake8 .
-
-# Проверка типов
 mypy app/
 ```
 
-Конфигурации находятся в `pyproject.toml` и `.flake8`.
+Автоформатирование — `ruff format .`. Конфигурации находятся в `pyproject.toml` и `.flake8`.
 
 ## Миграции БД
 
-Проект использует **Alembic** для управления схемой БД.
+Схемой БД управляет **Alembic**: `alembic upgrade head` создаёт таблицы `tariffs` и `payments`.
+Адрес БД берётся из `DATABASE_URL`, а не из `alembic.ini`.
 
 ### Создать новую миграцию (после изменения моделей)
 
@@ -189,6 +234,12 @@ alembic downgrade -1
 alembic current
 ```
 
+### Проверить, что модели и миграции совпадают
+
+```bash
+alembic check
+```
+
 ## Структура проекта
 
 ```
@@ -205,11 +256,11 @@ kvitto-api/
 ├── alembic/                 # Миграции БД
 ├── tests/
 │   ├── conftest.py          # Фикстуры pytest
-│   └── test_payments.py     # 13 тестов
+│   └── test_payments.py     # 24 теста
 ├── .github/workflows/       # CI/CD (GitHub Actions)
 ├── .cursorrules             # Правила для AI-ассистента
 ├── .flake8                  # Конфиг линтера
-├── pyproject.toml           # Конфиги Black, MyPy, Flake8
+├── pyproject.toml           # Конфиги Ruff, MyPy, Flake8
 ├── docker-compose.yml       # PostgreSQL (dev + test)
 ├── requirements.txt
 ├── pytest.ini
@@ -219,21 +270,20 @@ kvitto-api/
 
 ## CI/CD
 
-GitHub Actions автоматически запускает **lint + тесты** при каждом push в main/master.  
+GitHub Actions автоматически запускает **lint + тесты** при каждом push в main/master
+и при pull request в эти ветки.  
 Workflow: `.github/workflows/test.yml`
 
 ### Что проверяется в CI:
 
-1. **Black** — форматирование кода
-2. **Flake8** — стиль кода
-3. **MyPy** — проверка типов
-4. **pytest** — все 13 тестов на PostgreSQL
+1. **Ruff** — `ruff check .` и `ruff format --check .`
+2. **pytest** — все 24 теста на PostgreSQL (сервис в контейнере)
 
 ## Реализованные бонусы
 
-- ✅ Docker Compose для локальной разработки
+- ✅ Docker Compose поднимает PostgreSQL для разработки и тестов (приложение в контейнер не упаковано)
 - ✅ HMAC-SHA256 подпись вебхука (`X-Signature`)
 - ✅ Alembic миграции БД
 - ✅ GET /payments с фильтрами по email и status
-- ✅ GitHub Actions (Black + Flake8 + MyPy + pytest)
+- ✅ GitHub Actions (Ruff + pytest)
 - ✅ `.cursorrules` — правила для AI-ассистента

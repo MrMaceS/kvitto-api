@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
 from app.models.payment import PaymentMethod, PaymentStatus
 
@@ -17,17 +17,15 @@ class PaymentCreate(BaseModel):
     def normalize_promo(cls, v: str | None) -> str | None:
         return v.upper() if isinstance(v, str) else v
 
-    @field_validator("installment_months")
-    @classmethod
-    def validate_months(cls, v: int | None, info) -> int | None:
-        method = info.data.get("method")
-        if method == PaymentMethod.INSTALLMENT:
-            if v not in (3, 6, 12):
-                raise ValueError("installment_months must be 3, 6 or 12")
-        else:
-            if v is not None:
-                raise ValueError("installment_months must be None for non-installment methods")
-        return v
+    @model_validator(mode="after")
+    def validate_installment_months(self) -> "PaymentCreate":
+        """Срок рассрочки обязателен для installment (3, 6, 12) и запрещён для остальных методов."""
+        if self.method == PaymentMethod.INSTALLMENT:
+            if self.installment_months not in (3, 6, 12):
+                raise ValueError("installment_months must be 3, 6 or 12 for installment")
+        elif self.installment_months is not None:
+            raise ValueError("installment_months must be omitted for non-installment methods")
+        return self
 
 
 class PaymentOut(BaseModel):

@@ -1,11 +1,17 @@
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.payment import Payment, PaymentMethod, PaymentStatus
 from app.models.tariff import Tariff
 from app.schemas.payment import PaymentCreate, WebhookIn
+
+
+class InvalidTransitionError(Exception):
+    """Запрещённый переход статуса платежа. Превращается в 409 в app/main.py."""
+
 
 # state machine
 ALLOWED_TRANSITIONS = {
@@ -61,9 +67,18 @@ def apply_promo_code(price: int, promo_code: str | None) -> tuple[int, int]:
             detail=f"Unknown promo code: {promo_code}",
         )
 
-    discount = int(price * settings.promo_discount_percent / 100)
+    # Только целочисленная арифметика (без float). Скидка округляется вниз до копейки.
+    discount = price * settings.promo_discount_percent // 100
     final_price = price - discount
     return final_price, discount
+
+
+async def get_payment_by_key(session: AsyncSession, idempotency_key: str) -> Payment | None:
+    """Ищет платёж по Idempotency-Key."""
+    result = await session.execute(
+        select(Payment).where(Payment.idempotency_key == idempotency_key)
+    )
+    return result.scalar_one_or_none()
 
 
 async def create_payment(
@@ -76,10 +91,7 @@ async def create_payment(
     возвращает существующий платёж с is_new=False.
     """
     if idempotency_key:
-        result = await session.execute(
-            select(Payment).where(Payment.idempotency_key == idempotency_key)
-        )
-        existing_payment = result.scalar_one_or_none()
+        existing_payment = await get_payment_by_key(session, idempotency_key)
         if existing_payment:
             return existing_payment, False
 
@@ -100,13 +112,23 @@ async def create_payment(
     )
 
     # Если рассрочка — считаем график
-    if data.method == PaymentMethod.INSTALLMENT:
-        assert data.installment_months is not None
+    # Схема гарантирует: срок задан тогда и только тогда, когда метод — installment
+    if data.method == PaymentMethod.INSTALLMENT and data.installment_months is not None:
         payment.installment_months = data.installment_months
         payment.schedule = calculate_installment_schedule(final_price, data.installment_months)
 
-    session.add(payment)
-    await session.flush()
+    # SAVEPOINT: при гонке уникальный индекс по ключу отклонит второй INSERT,
+    # откатится только он, а внешняя транзакция останется рабочей.
+    try:
+        async with session.begin_nested():
+            session.add(payment)
+            await session.flush()
+    except IntegrityError:
+        if idempotency_key:
+            existing_payment = await get_payment_by_key(session, idempotency_key)
+            if existing_payment:
+                return existing_payment, False
+        raise
 
     return payment, True
 
@@ -125,12 +147,10 @@ async def get_payment_or_404(session: AsyncSession, payment_id: int) -> Payment:
 def validate_status_transition(current_status: PaymentStatus, new_status: PaymentStatus) -> None:
     """
     Проверяет, разрешён ли переход из current_status в new_status.
-    Если нет — выбрасывает 409 Conflict.
+    Если нет — выбрасывает InvalidTransitionError (в API это 409).
     """
     if new_status not in ALLOWED_TRANSITIONS[current_status]:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail={"error": "invalid transition"}
-        )
+        raise InvalidTransitionError(f"{current_status.value} -> {new_status.value}")
 
 
 async def update_payment_status(session: AsyncSession, payment_id: int, data: WebhookIn) -> Payment:
@@ -139,7 +159,7 @@ async def update_payment_status(session: AsyncSession, payment_id: int, data: We
 
     Проверяет:
     - Платёж существует (404 если нет)
-    - Переход разрешён (409 если нет)
+    - Переход разрешён (InvalidTransitionError → 409, если нет)
     """
     payment = await get_payment_or_404(session, payment_id)
 

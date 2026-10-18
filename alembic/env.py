@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
-# Импортируем наши модели и Base
+# Импортируем наши модели, Base и настройки
+from app.config import settings
 from app.database import Base
 from app.models import payment, tariff  # noqa
 
@@ -16,6 +17,10 @@ config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# URL БД берём из тех же настроек (DATABASE_URL / .env), что и приложение.
+# '%' экранируем: configparser воспринимает его как интерполяцию.
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 # Для автогенерации миграций
 target_metadata = Base.metadata

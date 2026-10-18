@@ -48,7 +48,7 @@ async def bank_webhook(
     - 200 { result: "ok" } — статус успешно обновлён
     - 401 — отсутствует или неверная подпись
     - 404 — платёж не найден
-    - 409 { error: "invalid transition" } — запрещённый переход
+    - 409 { error: "invalid_transition" } — запрещённый переход
     """
     await update_payment_status(session, data.payment_id, data)
     return {"result": "ok"}
