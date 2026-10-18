@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, Response, status, Query
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -70,6 +70,7 @@ async def list_payments(
     - GET /payments?email=test@example.com&status=succeeded — комбинация фильтров
     """
     from sqlalchemy import select
+
     from app.models.payment import Payment, PaymentStatus
 
     query = select(Payment)

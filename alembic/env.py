@@ -1,13 +1,15 @@
 import asyncio
 from logging.config import fileConfig
+
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
 from alembic import context
 
 # Импортируем наши модели и Base
 from app.database import Base
-from app.models import tariff, payment  # noqa
+from app.models import payment, tariff  # noqa
 
 # Конфиг Alembic
 config = context.config

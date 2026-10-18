@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+
 from app.database import async_session, init_db
 from app.routers import payments, tariffs, webhooks
 from app.seed import seed_tariffs
