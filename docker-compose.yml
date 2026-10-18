@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kvitto-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kvitto
+      POSTGRES_PASSWORD: kvitto
+      POSTGRES_DB: kvitto
+    ports:
+      - "5432:5432"
+    volumes:
+      - kvitto_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kvitto"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: kvitto-postgres-test
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kvitto_test
+      POSTGRES_PASSWORD: kvitto_test
+      POSTGRES_DB: kvitto_test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kvitto_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  kvitto_pg_data:

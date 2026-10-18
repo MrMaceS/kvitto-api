@@ -1,0 +1,58 @@
+# Environment variables (НИКОГДА не коммитим секреты!)
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment (твоё окружение .venv)
+.venv/
+venv/
+ENV/
+
+# IDEs (PyCharm, VS Code)
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing and Coverage (pytest)
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Type checking and linting (mypy, ruff)
+.mypy_cache/
+.ruff_cache/
+
+# Local Databases (на всякий случай, если создастся sqlite)
+*.db
+*.sqlite3
+
+# Alembic (игнорируем только кэш, сами миграции должны быть в git)
+alembic/versions/__pycache__/
+
+# OS
+.DS_Store
+Thumbs.db
