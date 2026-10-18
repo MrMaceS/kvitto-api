@@ -78,9 +78,9 @@ async def test_installment_schedule(client: AsyncClient, tariffs: dict):
         data = response.json()
 
         # Проверяем, что сумма графика равна amount
-        assert (
-            sum(data["schedule"]) == data["amount"]
-        ), f"Schedule sum {sum(data['schedule'])} != amount {data['amount']} for {months} months"
+        assert sum(data["schedule"]) == data["amount"], (
+            f"Schedule sum {sum(data['schedule'])} != amount {data['amount']} for {months} months"
+        )
 
         # Проверяем, что график содержит ровно `months` элементов
         assert len(data["schedule"]) == months
