@@ -50,5 +50,6 @@ jobs:
       env:
         # Используем имя сервиса 'postgres' и порт 5432 (внутренний порт контейнера)
         DATABASE_URL: postgresql+asyncpg://kvitto_test:kvitto_test@postgres:5432/kvitto_test
+        PYTHONPATH: .
       run: |
         pytest tests/ -v
